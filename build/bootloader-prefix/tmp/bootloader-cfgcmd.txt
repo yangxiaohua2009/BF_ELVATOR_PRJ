@@ -1,1 +1,0 @@
-cmd='C:/Program Files/Espressif/ESP-IDF Tools/tools/xtensa-esp32-elf/bin/tools/cmake/3.13.4/bin/cmake.exe;-DSDKCONFIG=D:/esp-idf/examples/peripherals/gpio/sdkconfig;-DIDF_PATH=D:/esp-idf;-GNinja;<SOURCE_DIR><SOURCE_SUBDIR>'
