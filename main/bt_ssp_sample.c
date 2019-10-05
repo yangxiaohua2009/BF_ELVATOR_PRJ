@@ -40,6 +40,8 @@ static long data_num = 0;
 static const esp_spp_sec_t sec_mask = ESP_SPP_SEC_AUTHENTICATE;
 static const esp_spp_role_t role_slave = ESP_SPP_ROLE_SLAVE;
 
+uint8_t bt_start_flag = 0;
+
 /*
 * The Private Structor for Lift Arrival Light System
 */
@@ -92,18 +94,15 @@ static void print_speed(void)
 */
 static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 {
-	int command_delimiter,index;		
-	char *command_buf = (char*)malloc(10);
-	char *params_buf = (char*)malloc(10);
-	
-	int uart_command_num = 0;
-	int uart_params_num = 0;
 	switch (event) {
 		case ESP_SPP_INIT_EVT:
 			ESP_LOGI(SPP_TAG, "ESP_SPP_INIT_EVT");
 			esp_bt_dev_set_device_name(EXCAMPLE_DEVICE_NAME);
 			esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
-			esp_spp_start_srv(sec_mask,role_slave, 0, SPP_SERVER_NAME);
+			//if(bt_start_flag == 0) {
+			ESP_LOGI(SPP_TAG, "ESP_SPP_INIT_EVT-1");
+				esp_spp_start_srv(sec_mask,role_slave, 0, SPP_SERVER_NAME);
+			//}
 			break;
 		case ESP_SPP_DISCOVERY_COMP_EVT:
 			ESP_LOGI(SPP_TAG, "ESP_SPP_DISCOVERY_COMP_EVT");
@@ -132,6 +131,12 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 				}
 				if(uart_priv.uart_cmd == 255) 
 				{
+					char *command_buf = (char*)malloc(10);
+					char *params_buf = (char*)malloc(10);
+					int command_delimiter,index;		
+	
+					int uart_command_num = 0;
+					int uart_params_num = 0;
 					command_delimiter = 0;
 					/*
 					*	To get the position of command delimiter
@@ -215,6 +220,8 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 					*	To perform the uart command
 					*/
 					perform_uart_command();
+					free(params_buf);
+					free(command_buf);
 				}
 			#else
 				gettimeofday(&time_new, NULL);
@@ -347,5 +354,71 @@ void bt_ssp_init()
     	esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_VARIABLE;
     	esp_bt_pin_code_t pin_code;
     	esp_bt_gap_set_pin(pin_type, 0, pin_code);
+	bt_start_flag = 0;
+}
+
+void bt_ssp_reinit()
+{
+    	esp_err_t ret; 
+#if 0
+    	esp_err_t ret = nvs_flash_init();
+    	if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        	ESP_ERROR_CHECK(nvs_flash_erase());
+        	ret = nvs_flash_init();
+    	}
+    	ESP_ERROR_CHECK( ret );
+#endif
+#if 0 
+	ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+    	
+#endif
+	esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    	if ((ret = esp_bt_controller_init(&bt_cfg)) != ESP_OK) {
+        	ESP_LOGE(SPP_TAG, "%s initialize controller failed: %s\n", __func__, esp_err_to_name(ret));
+        	//return;
+    	}
+    	if ((ret = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT)) != ESP_OK) {
+        	ESP_LOGE(SPP_TAG, "%s enable controller failed: %s\n", __func__, esp_err_to_name(ret));
+        	//return;
+    	}
+
+    	if ((ret = esp_bluedroid_init()) != ESP_OK) {
+        	ESP_LOGE(SPP_TAG, "%s initialize bluedroid failed: %s\n", __func__, esp_err_to_name(ret));
+        	//return;
+    	}
+
+    	if ((ret = esp_bluedroid_enable()) != ESP_OK) {
+        	ESP_LOGE(SPP_TAG, "%s enable bluedroid failed: %s\n", __func__, esp_err_to_name(ret));
+        	//return;
+    	}
+    	if ((ret = esp_bt_gap_register_callback(esp_bt_gap_cb)) != ESP_OK) {
+        	ESP_LOGE(SPP_TAG, "%s gap register failed: %s\n", __func__, esp_err_to_name(ret));
+        	//return;
+    	}
+
+    	if ((ret = esp_spp_register_callback(esp_spp_cb)) != ESP_OK) {
+        	ESP_LOGE(SPP_TAG, "%s spp register failed: %s\n", __func__, esp_err_to_name(ret));
+        	//return;
+    	}
+
+    	if ((ret = esp_spp_init(esp_spp_mode)) != ESP_OK) {
+        	ESP_LOGE(SPP_TAG, "%s spp init failed: %s\n", __func__, esp_err_to_name(ret));
+        	//return;
+    	}
+
+        ESP_LOGE(SPP_TAG, "%s ready to set paramteres for Secure Simple Pairing\n", __func__);
+    	/* Set default parameters for Secure Simple Pairing */
+    	esp_bt_sp_param_t param_type = ESP_BT_SP_IOCAP_MODE;
+    	esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_IO;
+    	esp_bt_gap_set_security_param(param_type, &iocap, sizeof(uint8_t));
+
+    	/*
+     	* Set default parameters for Legacy Pairing
+     	* Use variable pin, input pin code when pairing
+     	*/
+    	esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_VARIABLE;
+    	esp_bt_pin_code_t pin_code;
+    	esp_bt_gap_set_pin(pin_type, 0, pin_code);
+	bt_start_flag = 1;
 }
 

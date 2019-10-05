@@ -23,10 +23,15 @@
 #include "soc/uart_struct.h"
 #include "nvs_flash.h"
 #include "nvs.h"
-
+#include "esp_bt.h"
+#include "esp_bt_main.h"
+#include "esp_gap_bt_api.h"
+#include "esp_bt_device.h"
+#include "esp_spp_api.h"
 //#include "myprivate.h"
 
 extern void bt_ssp_init();
+extern void bt_ssp_reinit();
 
 #define STORAGE_NAMESPACE "storage"
 /**
@@ -118,6 +123,7 @@ SemaphoreHandle_t xElevator_UpArrival_Semaphore = NULL;
 SemaphoreHandle_t xElevator_DnArrival_Semaphore = NULL;
 SemaphoreHandle_t xLED_Flash_Semaphore = NULL;
 SemaphoreHandle_t xVoicePlay_Semaphore = NULL;
+SemaphoreHandle_t xVoiceComplete_Semaphore = NULL;
 QueueHandle_t uart0_queue;
 SemaphoreHandle_t xUART0_Semaphore = NULL;
 
@@ -238,7 +244,8 @@ void dingdong_play(void)
     	i2s_set_clk(I2S_NUM, SAMPLE_RATE, 16, 2); 
     	i2s_write(I2S_NUM, samples_data, 7282 * 16, &i2s_bytes_write, portMAX_DELAY);
     	free(samples_data);
-#else    	
+#else    
+#if 0
 	uint8_t *samples_data = malloc(3641 * 16);
     	size_t i2s_bytes_write = 0;
     	memset(samples_data, 0, 3641*16);
@@ -250,7 +257,20 @@ void dingdong_play(void)
     	i2s_write(I2S_NUM, samples_data, 3641 * 16, &i2s_bytes_write, portMAX_DELAY);
 	//printf("dingdong----2\n");
 	free(samples_data);
+#else
+	uint8_t *samples_data = malloc(3641);
+    	size_t i2s_bytes_write = 0;
+	uint8_t index;
 
+    	memset(samples_data, 0, 3641);
+    	i2s_set_clk(I2S_NUM, SAMPLE_RATE, 16, 2); 
+	for(index =0; index < 32; index++) {
+    		memcpy(samples_data, dingdong_sample_16k+3641 * index, 3641);
+    		i2s_write(I2S_NUM, samples_data, 3641, &i2s_bytes_write, portMAX_DELAY);
+	}
+	free(samples_data);
+
+#endif
 #endif
 }
 /*
@@ -273,6 +293,7 @@ void voice_play(void)
     	free(samples_data);
     	free(samples_data1);
 #else
+#if 0
     	uint8_t *samples_data = malloc(5920 * 16);
     	size_t i2s_bytes_write = 0;
     	memset(samples_data, 0, 5920*16);
@@ -282,6 +303,18 @@ void voice_play(void)
     	memcpy(samples_data, pcm_sample_16k+5920 * 16, 5920 * 16);
     	i2s_write(I2S_NUM, samples_data, 5920 * 16, &i2s_bytes_write, portMAX_DELAY);
     	free(samples_data);
+#else
+    	uint8_t *samples_data = malloc(5920);
+    	size_t i2s_bytes_write = 0;
+	uint8_t index = 0;
+    	memset(samples_data, 0, 5920);
+    	i2s_set_clk(I2S_NUM, SAMPLE_RATE, 16, 2); 
+    	for(index = 0; index < 32; index++) {
+		memcpy(samples_data, pcm_sample_16k+5920 * index, 5920);
+    		i2s_write(I2S_NUM, samples_data, 5920, &i2s_bytes_write, portMAX_DELAY);
+	}
+	free(samples_data);
+#endif
 #endif
 }
 /*
@@ -718,9 +751,9 @@ static void task_voice_play(void* arg)
 {
 	for(;;)
 	{
-	//	printf("task_voice_play().......\n");
 		if(xSemaphoreTake(xVoicePlay_Semaphore, 0)) 
 		{
+			printf("task_voice_play().......\n");
 			xSemaphoreTake(xVoiceIndex_Semaphore,portMAX_DELAY);
 			uint8_t voice_index = myprivate.voice_index;
 			uint16_t voice_delay = myprivate.voice_delay;
@@ -735,6 +768,8 @@ static void task_voice_play(void* arg)
 			}
 			gpio_set_level(GPIO_PA_EN, 0);
 			vTaskDelay(voice_delay / portTICK_RATE_MS);
+			xSemaphoreGive(xVoiceComplete_Semaphore);
+			printf("task_voice_play() done\n");
 		}
 		vTaskDelay(30 / portTICK_RATE_MS);
 	}
@@ -760,7 +795,7 @@ static void task_elevator_1_arrival(void* arg)
     		doordlytime = myprivate.door_delay;
     		voice_num = myprivate.voice_num;
     		xSemaphoreGive(xDoorDly_Semaphore);
-#if 0
+#if 1
 		while(1){
     			if((gpio_get_level(GPIO_DT1_UP) == 0) || (gpio_get_level(GPIO_DT2_UP) == 0) ) {
     				timecnt_up++;
@@ -793,28 +828,89 @@ static void task_elevator_1_arrival(void* arg)
     		if(timecnt_up == 10) {
     			timecnt_up = 0;
     			timecnt_up_hld = 0;
-    			xSemaphoreGive(xElevator_UpArrival_Semaphore);
+#if 1 
+			if(esp_bt_sleep_enable() == ESP_OK) {
+				printf("BT enter into sleep\n");
+ 		        //	esp_bluedroid_disable();
+ 		      	//	esp_bt_controller_disable();
+			}
+			else {
+				printf("BT can't enter into sleep\n");
+			}
+
+#else
+ 		        esp_bluedroid_disable();
+    			vTaskDelay(10 / portTICK_RATE_MS);
+ 		      	esp_bluedroid_deinit();
+    			vTaskDelay(10 / portTICK_RATE_MS);
+ 		      	esp_bt_controller_disable();
+    			vTaskDelay(10 / portTICK_RATE_MS);
+ 		      	esp_bt_controller_deinit();
+		//	esp_bt_mem_release(ESP_BT_MODE_CLASSIC_BT);
+#endif
+			xSemaphoreGive(xElevator_UpArrival_Semaphore);
     			vTaskDelay(10 / portTICK_RATE_MS);
     			if(voice_start_u < voice_num) {
     				xSemaphoreGive(xVoicePlay_Semaphore);
-    				voice_start_u++;
+    				//voice_start_u++;
     			}
     			xSemaphoreTake(xLED_Flash_Semaphore, portMAX_DELAY);
+    			if(voice_start_u < voice_num) {
+    				xSemaphoreTake(xVoiceComplete_Semaphore, portMAX_DELAY);
+    				voice_start_u++;
+			}
     			vTaskDelay(10 / portTICK_RATE_MS);
-    		}
+#if 1
+			esp_bt_controller_wakeup_request();
+//			esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
+//			esp_bluedroid_enable();
+#else
+			bt_ssp_reinit();
+#endif
+		}
     		else {
     			if(timecnt_dn == 10) {
     				timecnt_dn = 0;
     				timecnt_dn_hld = 0;
+#if 1
+				if(esp_bt_sleep_enable() == ESP_OK) {
+					printf("BT enter into sleep\n");
+// 			        	esp_bluedroid_disable();
+// 		      			esp_bt_controller_disable();
+				}
+				else {
+					printf("BT can't enter into sleep\n");
+				}
+#else
+ 			        esp_bluedroid_disable();
+    				vTaskDelay(10 / portTICK_RATE_MS);
+ 			      	esp_bluedroid_deinit();
+    				vTaskDelay(10 / portTICK_RATE_MS);
+ 		      		esp_bt_controller_disable();
+    				vTaskDelay(10 / portTICK_RATE_MS);
+ 		      		esp_bt_controller_deinit();
+			//	esp_bt_mem_release(ESP_BT_MODE_CLASSIC_BT);
+#endif
     				xSemaphoreGive(xElevator_DnArrival_Semaphore);
     				vTaskDelay(10 / portTICK_RATE_MS);
     				if(voice_start_d < voice_num) {
     					xSemaphoreGive(xVoicePlay_Semaphore);
-    					voice_start_d++;
+    					//voice_start_d++;
     				}
     				xSemaphoreTake(xLED_Flash_Semaphore, portMAX_DELAY);
+    				if(voice_start_d < voice_num) {
+    					xSemaphoreTake(xVoiceComplete_Semaphore, portMAX_DELAY);
+    					voice_start_d++;
+    				}
     				vTaskDelay(10 / portTICK_RATE_MS);
-    			}
+#if 1
+				esp_bt_controller_wakeup_request();
+//				esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
+//				esp_bluedroid_enable();
+#else
+				bt_ssp_reinit();
+#endif
+			}
     		}
 #endif
     		vTaskDelay(10 / portTICK_RATE_MS);
@@ -2420,20 +2516,21 @@ void app_main()
 	xElevator_DnArrival_Semaphore = xSemaphoreCreateBinary();
 	xLED_Flash_Semaphore =  xSemaphoreCreateBinary();
 	xVoicePlay_Semaphore =  xSemaphoreCreateBinary();	
+	xVoiceComplete_Semaphore =  xSemaphoreCreateBinary();	
 	
 	xLIGHTNUM_Semaphore = xSemaphoreCreateMutex();	
 	xVoiceIndex_Semaphore = xSemaphoreCreateMutex();	
 	xDoorDly_Semaphore = xSemaphoreCreateMutex();	
 	xLEDWait_Semaphore = xSemaphoreCreateMutex();	
 		
-	xTaskCreate(task_elevator_1_arrival, "elevator 1 Arrival", 4096, NULL, 10, NULL);
-	xTaskCreate(task_led_flash, "led on", 4096, NULL, 11, NULL);
-	xTaskCreate(task_voice_play, "voice play", 4096, NULL, 9, NULL);
-	xTaskCreate(uart_event_task, "uart_event_task", 4096, NULL, 8, NULL);
-	xTaskCreate(echo_task, "echo_task", 4096, NULL, 7, NULL);
+	xTaskCreate(task_elevator_1_arrival, "elevator 1 Arrival", 2048, NULL, 10, NULL);
+	xTaskCreate(task_led_flash, "led on", 2048, NULL, 11, NULL);
+	xTaskCreate(task_voice_play, "voice play", 2048, NULL, 9, NULL);
+	xTaskCreate(uart_event_task, "uart_event_task", 2048, NULL, 8, NULL);
+	xTaskCreate(echo_task, "echo_task", 2048, NULL, 7, NULL);
 	while(1) 
 	{
-		printf("main().....waiting........\n");
+		//printf("main().....waiting........\n");
 	      	vTaskDelay(10000 / portTICK_RATE_MS);
 	}	
 }
