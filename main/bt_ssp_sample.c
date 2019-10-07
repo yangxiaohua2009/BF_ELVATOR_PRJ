@@ -14,6 +14,7 @@
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_bt.h"
 #include "esp_bt_main.h"
@@ -34,27 +35,28 @@
 
 static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
 
-static struct timeval time_new, time_old;
-static long data_num = 0;
-
 static const esp_spp_sec_t sec_mask = ESP_SPP_SEC_AUTHENTICATE;
 static const esp_spp_role_t role_slave = ESP_SPP_ROLE_SLAVE;
 
 uint8_t bt_start_flag = 0;
 
+#define SPP_DATA_LEN 100
+static uint8_t spp_data[SPP_DATA_LEN];
 /*
 * The Private Structor for Lift Arrival Light System
 */
 typedef struct {
-        uint8_t light_num;
-        uint8_t brightness;
-        uint8_t frequency;
-        uint8_t voice_index;
-        uint16_t door_delay;
-        uint16_t led_wait;
-        uint8_t voice_num;
-        uint16_t voice_delay;
-        uint8_t  work_mode;
+	uint8_t light_num;
+	uint8_t brightness;
+	uint8_t frequency;
+  	uint8_t voice_index; 
+  	uint16_t door_delay;
+  	uint16_t led_wait;
+  	uint8_t voice_num;
+  	uint16_t voice_delay;
+  	uint8_t  work_mode;
+	uint16_t  datecode;
+	uint16_t bledev_number;
 } BF_PRIV;
 extern BF_PRIV myprivate;
 /*
@@ -79,29 +81,68 @@ extern const uart_command_config uart_params[];
 extern int strcmp_private( char *,  const char *);
 extern void perform_uart_command(void);
 
-/*
-static void print_speed(void)
-{
-	float time_old_s = time_old.tv_sec + time_old.tv_usec / 1000000.0;
-	float time_new_s = time_new.tv_sec + time_new.tv_usec / 1000000.0;
-	float time_interval = time_new_s - time_old_s;
-	float speed = data_num * 8 / time_interval / 1000.0;
-	ESP_LOGI(SPP_TAG, "speed(%fs ~ %fs): %f kbit/s" , time_old_s, time_new_s, speed);
-	data_num = 0;
-	time_old.tv_sec = time_new.tv_sec;
-	time_old.tv_usec = time_new.tv_usec;
-}
-*/
+const uint8_t info[8] = {"success!"};
+
 static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 {
+	char *devname_profile = "BFBLE";
+	char* devname = (char*)malloc(30);
+	uint8_t index, tmp,tmp1,tmp2,tmp3,tmp4;
 	switch (event) {
 		case ESP_SPP_INIT_EVT:
+			for(index = 0; ; index++) {
+				if(*(devname_profile+index) != 0) {
+					*(devname + index) = *(devname_profile + index);
+					printf("*(devname + %d) = 0x%x\n", index, *(devname+index));
+				}
+				else {
+					break;
+				}
+			}
+                       	tmp = myprivate.datecode / 10000;		
+			*(devname + index) = tmp + 0x30;
+			index++;
+			tmp1 = (myprivate.datecode - tmp * 10000) / 1000;
+			*(devname + index) = tmp1 + 0x30;
+			index++;
+			tmp2 = (myprivate.datecode - tmp * 10000 - tmp1 * 1000) / 100;
+			*(devname + index) = tmp2 + 0x30;
+			index++;
+			tmp3 = (myprivate.datecode - tmp * 10000 - tmp1 * 1000 - tmp2 * 100) / 10;
+			*(devname + index) = tmp3 + 0x30;
+			index++;
+			tmp4 = (myprivate.datecode - tmp * 10000 - tmp1 * 1000 - tmp2 * 100 - tmp3 * 10);
+			*(devname + index) = tmp4 + 0x30;
+			index++;
+			tmp = 0;
+			tmp1 = 0;
+			tmp2 = 0;
+			tmp3 = 0;
+			tmp4 = 0;
+                       	tmp = myprivate.bledev_number / 10000;		
+			*(devname + index) = tmp + 0x30;
+			index++;
+			tmp1 = (myprivate.bledev_number - tmp * 10000) / 1000;
+			*(devname + index) = tmp1 + 0x30;
+			index++;
+			tmp2 = (myprivate.bledev_number - tmp * 10000 - tmp1 * 1000) / 100;
+			*(devname + index) = tmp2 + 0x30;
+			index++;
+			tmp3 = (myprivate.bledev_number - tmp * 10000 - tmp1 * 1000 - tmp2 * 100) / 10;
+			*(devname + index) = tmp3 + 0x30;
+			index++;
+			tmp4 = (myprivate.bledev_number - tmp * 10000 - tmp1 * 1000 - tmp2 * 100 - tmp3 * 10);
+			*(devname + index) = tmp4 + 0x30;
+			index++;
+			*(devname + index) = 0;
+                       
 			ESP_LOGI(SPP_TAG, "ESP_SPP_INIT_EVT");
-			esp_bt_dev_set_device_name(EXCAMPLE_DEVICE_NAME);
+			//esp_bt_dev_set_device_name(EXCAMPLE_DEVICE_NAME);
+			esp_bt_dev_set_device_name(devname);
 			esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
 			//if(bt_start_flag == 0) {
 			ESP_LOGI(SPP_TAG, "ESP_SPP_INIT_EVT-1");
-				esp_spp_start_srv(sec_mask,role_slave, 0, SPP_SERVER_NAME);
+			esp_spp_start_srv(sec_mask,role_slave, 0, SPP_SERVER_NAME);
 			//}
 			break;
 		case ESP_SPP_DISCOVERY_COMP_EVT:
@@ -109,6 +150,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 			break;
 		case ESP_SPP_OPEN_EVT:
 			ESP_LOGI(SPP_TAG, "ESP_SPP_OPEN_EVT");
+        		esp_spp_write(param->srv_open.handle, SPP_DATA_LEN, spp_data);
 			break;
 		case ESP_SPP_CLOSE_EVT:
 			ESP_LOGI(SPP_TAG, "ESP_SPP_CLOSE_EVT");
@@ -120,116 +162,131 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 			ESP_LOGI(SPP_TAG, "ESP_SPP_CL_INIT_EVT");
 			break;
 		case ESP_SPP_DATA_IND_EVT:
-			#if (SPP_SHOW_MODE == SPP_SHOW_DATA)
-				ESP_LOGI(SPP_TAG, "ESP_SPP_DATA_IND_EVT len=%d handle=%d",
-				param->data_ind.len, param->data_ind.handle);
-				esp_log_buffer_hex("",param->data_ind.data,param->data_ind.len);
-				/////////////////////////////////////////////////
-	
-				if(uart_priv.uart_cmd == 1)
-				{
-				}
-				if(uart_priv.uart_cmd == 255) 
-				{
-					char *command_buf = (char*)malloc(10);
-					char *params_buf = (char*)malloc(10);
-					int command_delimiter,index;		
-	
-					int uart_command_num = 0;
-					int uart_params_num = 0;
-					command_delimiter = 0;
-					/*
-					*	To get the position of command delimiter
-					*	copy the command string
-					*/
-					for(index = 0; index < param->data_ind.len; index++) {	
-						if(*(param->data_ind.data + index) == ' ') {
-							break;
-						}
-						*(command_buf+index) = *(param->data_ind.data + index);
+			ESP_LOGI(SPP_TAG, "ESP_SPP_DATA_IND_EVT len=%d handle=%d",
+			param->data_ind.len, param->data_ind.handle);
+			esp_log_buffer_hex("",param->data_ind.data,param->data_ind.len);
+			if(uart_priv.uart_cmd == 1)
+			{
+			}
+			if(uart_priv.uart_cmd == 255) 
+			{
+				char *command_buf = (char*)malloc(10);
+				char *params_buf = (char*)malloc(10);
+				int command_delimiter,index;		
+				int uart_command_num = 0;
+				int uart_params_num = 0;
+				command_delimiter = 0;
+				/*
+				*	To get the position of command delimiter
+				*	copy the command string
+				*/
+				for(index = 0; index < param->data_ind.len; index++) {	
+					if(*(param->data_ind.data + index) == ' ') {
+						break;
 					}
-					*(command_buf + index) = '\0';	//command EOF 
-	
-					/*
-					*	copy the argument of command
-					*/
-					//value_len = 0;
-					index++;
-					command_delimiter =  index;
-					for(; index < param->data_ind.len; index++) {
-						if(*(param->data_ind.data + index) == ' ' || (*(param->data_ind.data + index) == 0x0d 
-							&& *(param->data_ind.data + index + 1) == 0x0a)) 
-						{		
-							break;
-						}
-						*(params_buf + index - command_delimiter) = *(param->data_ind.data + index);
-					}
-					*(params_buf + index - command_delimiter) = '\0'; //argu EOF 
-					index++;
-					uart_priv.data = 0;
-					for(; index < param->data_ind.len; index++) {
-						if((*(param->data_ind.data + index) == ' ')|| (*(param->data_ind.data + index) == 0x0d 
-							&& *(param->data_ind.data + index + 1) == 0x0a)) 
-						{			
-							break;
-						}
-						uart_priv.data = uart_priv.data * 10;
-						uart_priv.data += *(param->data_ind.data + index)-0x30;
-					}					
-	
-					/*
-					*	To check the command type
-					*/
-					index = 0;
-					uart_priv.uart_cmd =  255;
-					while((uart_command[index].cmd) != NULL) {
-						if(strcmp_private(command_buf, uart_command[index].cmd)) {
-							index++;
-						}
-						else {	
-							command_delimiter = 0;
-							while(*(uart_command[index].num + command_delimiter)) {
-								uart_command_num = uart_command_num * 10 + 
-									*(uart_command[index].num + command_delimiter) - 0x30;
-								command_delimiter++;
-							}
-							uart_priv.uart_cmd = uart_command_num;
-							break;
-						}
-					}
-					/*
-					*	To check the parameters type
-					*/
-					index = 0;
-					while((uart_params[index].cmd) != NULL) {
-						if(strcmp_private(params_buf, uart_params[index].cmd)) {
-							index++;
-						}
-						else {	
-							command_delimiter = 0;
-							while(*(uart_params[index].num + command_delimiter)) {
-								uart_params_num = uart_params_num * 10 + 
-									*(uart_params[index].num + command_delimiter) - 0x30;
-								command_delimiter++;
-							}
-							uart_priv.uart_params = uart_params_num;
-							break;
-						}
-					}					
-					/*
-					*	To perform the uart command
-					*/
-					perform_uart_command();
-					free(params_buf);
-					free(command_buf);
+					*(command_buf+index) = *(param->data_ind.data + index);
 				}
-			#else
-				gettimeofday(&time_new, NULL);
-				data_num += param->data_ind.len;
-				if (time_new.tv_sec - time_old.tv_sec >= 3) {
-					print_speed();
+				*(command_buf + index) = '\0';	//command EOF 
+				/*
+				*	copy the argument of command
+				*/
+				//value_len = 0;
+				index++;
+				command_delimiter =  index;
+				for(; index < param->data_ind.len; index++) {
+					if(*(param->data_ind.data + index) == ' ' || (*(param->data_ind.data + index) == 0x0d 
+						&& *(param->data_ind.data + index + 1) == 0x0a)) 
+					{		
+						break;
+					}
+					*(params_buf + index - command_delimiter) = *(param->data_ind.data + index);
 				}
-			#endif
+				*(params_buf + index - command_delimiter) = '\0'; //argu EOF 
+				index++;
+				uart_priv.data = 0;
+				for(; index < param->data_ind.len; index++) {
+					if((*(param->data_ind.data + index) == ' ')|| (*(param->data_ind.data + index) == 0x0d 
+						&& *(param->data_ind.data + index + 1) == 0x0a)) 
+					{			
+						break;
+					}
+					uart_priv.data = uart_priv.data * 10;
+					uart_priv.data += *(param->data_ind.data + index)-0x30;
+				}					
+				/*
+				*	To check the command type
+				*/
+				index = 0;
+				uart_priv.uart_cmd =  255;
+				while((uart_command[index].cmd) != NULL) {
+					if(strcmp_private(command_buf, uart_command[index].cmd)) {
+						index++;
+					}
+					else {	
+						command_delimiter = 0;
+						while(*(uart_command[index].num + command_delimiter)) {
+							uart_command_num = uart_command_num * 10 + 
+								*(uart_command[index].num + command_delimiter) - 0x30;
+							command_delimiter++;
+						}
+						uart_priv.uart_cmd = uart_command_num;
+						break;
+					}
+				}
+				/*
+				*	To check the parameters type
+				*/
+				index = 0;
+				while((uart_params[index].cmd) != NULL) {
+					if(strcmp_private(params_buf, uart_params[index].cmd)) {
+						index++;
+					}
+					else {	
+						command_delimiter = 0;
+						while(*(uart_params[index].num + command_delimiter)) {
+							uart_params_num = uart_params_num * 10 + 
+								*(uart_params[index].num + command_delimiter) - 0x30;
+							command_delimiter++;
+						}
+						uart_priv.uart_params = uart_params_num;
+						break;
+					}
+				}					
+				/*
+				*	To perform the uart command
+				*/
+				perform_uart_command();
+				for(index = 0; ; index++) {
+					if(*(command_buf+index) == '\0') {
+						spp_data[index] = ' ';
+						break;
+					}
+					else {
+						spp_data[index] = *(command_buf + index);
+					}
+				}
+				index++;
+				for(tmp = 0; ; tmp++, index++) {
+					if(*(params_buf+tmp) == '\0') {
+						spp_data[index] = ' ';
+						break;
+					}
+					else {
+						spp_data[index] = *(params_buf + tmp);
+					}
+				}
+				index++;	
+				for(tmp = 0; tmp < 8; tmp++, index++) {
+					spp_data[index] = info[tmp];
+				}
+				spp_data[index] = '\r';
+				index++;
+				spp_data[index] = '\n';
+				index++;
+				esp_spp_write(param->write.handle, index, spp_data);
+				free(params_buf);
+				free(command_buf);
+			}
 			break;
 		case ESP_SPP_CONG_EVT:
 			ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT");
@@ -239,7 +296,6 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 			break;
 		case ESP_SPP_SRV_OPEN_EVT:
 			ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT");
-			gettimeofday(&time_old, NULL);
 			break;
 		default:
 			break;
@@ -336,7 +392,11 @@ void bt_ssp_init()
         	ESP_LOGE(SPP_TAG, "%s spp register failed: %s\n", __func__, esp_err_to_name(ret));
         	return;
     	}
-
+    	if ((ret = esp_bredr_tx_power_set(ESP_PWR_LVL_P6, ESP_PWR_LVL_P9)) != ESP_OK) {
+        	ESP_LOGE(SPP_TAG, "%s esp bredr tx set power: %s\n", __func__, esp_err_to_name(ret));
+        	return;
+    	}
+	
     	if ((ret = esp_spp_init(esp_spp_mode)) != ESP_OK) {
         	ESP_LOGE(SPP_TAG, "%s spp init failed: %s\n", __func__, esp_err_to_name(ret));
         	return;

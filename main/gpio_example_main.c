@@ -131,6 +131,8 @@ SemaphoreHandle_t xLIGHTNUM_Semaphore = NULL;
 SemaphoreHandle_t xVoiceIndex_Semaphore = NULL;
 SemaphoreHandle_t xDoorDly_Semaphore = NULL;
 SemaphoreHandle_t xLEDWait_Semaphore = NULL;
+SemaphoreHandle_t xBLEDEV_Semaphore = NULL;
+
 /*
 * declare uart event tag
 */
@@ -148,6 +150,8 @@ typedef struct {
   	uint8_t voice_num;
   	uint16_t voice_delay;
   	uint8_t  work_mode;
+	uint16_t  datecode;
+	uint16_t bledev_number;
 } BF_PRIV;
 BF_PRIV myprivate;
 /*
@@ -172,6 +176,7 @@ const uart_command_config uart_command[] = {
 	{"BFADV", "1"},
 	{"BFTST", "2"},
 	{"BFGET", "3"},
+	{"BFBLE", "4"},
 	{NULL, NULL}
 };	
 /*
@@ -188,6 +193,7 @@ const uart_command_config uart_params[] = {
 	{"-O", "7"},   //Voice repeat number
 	{"-W", "8"},   //Voice wait time
 	{"-M", "9"},   //DIVIDER MODE
+	{"-S", "10"},  //SERIAL NUMBER
 	{NULL, NULL}
 };	
 /*
@@ -541,6 +547,36 @@ void perform_uart_command(void)
   			nvs_close(my_nvs_handle);
 			uart_priv.uart_cmd = 255;
 			break;
+		case 4:   //BFBLE -D
+			switch(uart_priv.uart_params) {
+				case 10:
+					printf("BFBLE -S %d", (uint16_t)uart_priv.data);
+					xSemaphoreTake(xBLEDEV_Semaphore, portMAX_DELAY);
+    					myprivate.bledev_number = (uint16_t)uart_priv.data;
+    					xSemaphoreGive(xBLEDEV_Semaphore);
+    					printf("Set BLE Device Serial Number into NVS Flash................\n");
+    					int16_t blenumber = (int16_t)myprivate.bledev_number;
+    					err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_nvs_handle); 
+      					err = nvs_set_i16(my_nvs_handle, "bledevnumber", blenumber);   
+      					printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+					break;
+				case 3:
+					printf("BFBLE -D %d", (uint16_t)uart_priv.data);
+					xSemaphoreTake(xBLEDEV_Semaphore, portMAX_DELAY);
+    					myprivate.datecode = (uint16_t)uart_priv.data;
+    					xSemaphoreGive(xBLEDEV_Semaphore);
+    					printf("Set BLE date code into NVS Flash................\n");
+    					int16_t bledate = (int16_t)myprivate.datecode;
+    					err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_nvs_handle); 
+      					err = nvs_set_i16(my_nvs_handle, "datecode", bledate);   
+      					printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+					break;
+				default:
+					break;
+			}
+  			nvs_close(my_nvs_handle);
+			uart_priv.uart_cmd = 255;
+			break;
 		default:
 			uart_priv.uart_cmd = 255;
 			break;
@@ -621,9 +657,11 @@ void echo_task(void* arg)
 						uart_priv.data += *(data + index)-0x30;
 					}					
 					 
+					printf("uart_priv.dat = %d\n", (uint16_t)uart_priv.data);
 					/*
 					*	To check the command type
 					*/
+					printf("check the uart command\n");
 					index = 0;
 					uart_priv.uart_cmd =  255;
 					while((uart_command[index].cmd) != NULL) {
@@ -639,12 +677,14 @@ void echo_task(void* arg)
 								command_delimiter++;
 							}
 							uart_priv.uart_cmd = uart_command_num;
+							printf("UART COMMAND = %d\n", uart_priv.uart_cmd);
 							break;
 						}
 					}
 					/*
 					*	To check the parameters type
 					*/
+					printf("check the uart parameters\n");
 					index = 0;
 					while((uart_params[index].cmd) != NULL) {
 						if(strcmp_private(params_buf, uart_params[index].cmd)) {
@@ -659,12 +699,14 @@ void echo_task(void* arg)
 								command_delimiter++;
 							}
 							uart_priv.uart_params = uart_params_num;
+							printf("UART PARAMS = %d\n", uart_priv.uart_params);
 							break;
 						}
 					}					
 					/*
 					*	To perform the uart command
 					*/
+					printf("perform uart command\sn");
 					perform_uart_command();
 				}
 			}
@@ -828,15 +870,15 @@ static void task_elevator_1_arrival(void* arg)
     		if(timecnt_up == 10) {
     			timecnt_up = 0;
     			timecnt_up_hld = 0;
-#if 1 
+#if 1
+			/*
 			if(esp_bt_sleep_enable() == ESP_OK) {
 				printf("BT enter into sleep\n");
- 		        //	esp_bluedroid_disable();
- 		      	//	esp_bt_controller_disable();
 			}
 			else {
 				printf("BT can't enter into sleep\n");
 			}
+			*/
 
 #else
  		        esp_bluedroid_disable();
@@ -861,9 +903,7 @@ static void task_elevator_1_arrival(void* arg)
 			}
     			vTaskDelay(10 / portTICK_RATE_MS);
 #if 1
-			esp_bt_controller_wakeup_request();
-//			esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
-//			esp_bluedroid_enable();
+			//esp_bt_controller_wakeup_request();
 #else
 			bt_ssp_reinit();
 #endif
@@ -873,14 +913,14 @@ static void task_elevator_1_arrival(void* arg)
     				timecnt_dn = 0;
     				timecnt_dn_hld = 0;
 #if 1
+				/*
 				if(esp_bt_sleep_enable() == ESP_OK) {
 					printf("BT enter into sleep\n");
-// 			        	esp_bluedroid_disable();
-// 		      			esp_bt_controller_disable();
 				}
 				else {
 					printf("BT can't enter into sleep\n");
 				}
+				*/
 #else
  			        esp_bluedroid_disable();
     				vTaskDelay(10 / portTICK_RATE_MS);
@@ -904,9 +944,7 @@ static void task_elevator_1_arrival(void* arg)
     				}
     				vTaskDelay(10 / portTICK_RATE_MS);
 #if 1
-				esp_bt_controller_wakeup_request();
-//				esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
-//				esp_bluedroid_enable();
+				//esp_bt_controller_wakeup_request();
 #else
 				bt_ssp_reinit();
 #endif
@@ -2215,6 +2253,8 @@ void app_main()
   	myprivate.voice_num = 2;
   	myprivate.voice_delay = 5000;
   	myprivate.work_mode = 0;
+  	myprivate.bledev_number = 0;
+  	myprivate.datecode = 20191;
 	printf("Ready to init nvs flash!\n");
 	err = nvs_flash_init();
 	if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -2236,6 +2276,8 @@ void app_main()
 	int8_t voice_num = 0;
 	int16_t voice_delay = 0;
 	int8_t divider = 0;
+	int16_t bledev_number = 0;
+	int16_t datecode = 0;
 	printf("Ready to read the lignt number value from NVS Flash........................\n");
 	err = nvs_get_i8(my_nvs_handle, "light_number", &lightnum);
   	switch (err) {
@@ -2398,6 +2440,42 @@ void app_main()
      			 printf("Error (%s) reading!\n", esp_err_to_name(err));
 		break;
   	}	  	    	
+  	printf("Ready to read the bluetooth device serial number from NVS Flash........................\n");
+	err = nvs_get_i16(my_nvs_handle, "bledevnumber", &bledev_number);
+  	switch (err) {
+  		case ESP_OK:
+    			printf(" bluetooth serial number Read Done! bledev_number = %d\n", (uint16_t)bledev_number);
+      			myprivate.bledev_number = bledev_number;
+      		break;
+    		case ESP_ERR_NVS_NOT_FOUND:
+      			printf("The bluetooth serial number is not initialized yet!\n");
+      			printf("The bluetooth serial number is initializing now!\n");
+      			bledev_number = (int16_t)myprivate.bledev_number;
+      			err = nvs_set_i16(my_nvs_handle, "bledevnumber", bledev_number);
+      			printf((err != ESP_OK) ? "Failed!\n" : "Done\n"); 
+      		break;
+    		default :
+      			printf("Error (%s) reading!\n", esp_err_to_name(err));
+		break;
+  	}	 
+  	printf("Ready to read the date code from NVS Flash........................\n");
+	err = nvs_get_i16(my_nvs_handle, "datecode", &datecode);
+  	switch (err) {
+  		case ESP_OK:
+    			printf(" Date Code Read Done! datecode = %d\n", (uint16_t)datecode);
+      			myprivate.datecode = datecode;
+      		break;
+    		case ESP_ERR_NVS_NOT_FOUND:
+      			printf("Date Code is not initialized yet!\n");
+      			printf("Date Code is initializing now!\n");
+      			datecode = (int16_t)myprivate.datecode;
+      			err = nvs_set_i16(my_nvs_handle, "datecode", datecode);
+      			printf((err != ESP_OK) ? "Failed!\n" : "Done\n"); 
+      		break;
+    		default :
+      			printf("Error (%s) reading!\n", esp_err_to_name(err));
+		break;
+  	}	 
 #if 0
 	    // Read run time blob
   size_t required_size = 0;  // value will default to 0, if not set yet in NVS
@@ -2522,6 +2600,7 @@ void app_main()
 	xVoiceIndex_Semaphore = xSemaphoreCreateMutex();	
 	xDoorDly_Semaphore = xSemaphoreCreateMutex();	
 	xLEDWait_Semaphore = xSemaphoreCreateMutex();	
+	xBLEDEV_Semaphore = xSemaphoreCreateMutex();	
 		
 	xTaskCreate(task_elevator_1_arrival, "elevator 1 Arrival", 2048, NULL, 10, NULL);
 	xTaskCreate(task_led_flash, "led on", 2048, NULL, 11, NULL);
