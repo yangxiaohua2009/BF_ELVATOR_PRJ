@@ -132,7 +132,7 @@ SemaphoreHandle_t xVoiceIndex_Semaphore = NULL;
 SemaphoreHandle_t xDoorDly_Semaphore = NULL;
 SemaphoreHandle_t xLEDWait_Semaphore = NULL;
 SemaphoreHandle_t xBLEDEV_Semaphore = NULL;
-
+SemaphoreHandle_t xRTC_Semaphore = NULL;
 /*
 * declare uart event tag
 */
@@ -152,6 +152,9 @@ typedef struct {
   	uint8_t  work_mode;
 	uint16_t  datecode;
 	uint16_t bledev_number;
+	uint8_t  rtc_mode;
+	uint16_t daycnt;
+	uint16_t daycnt_backup;
 } BF_PRIV;
 BF_PRIV myprivate;
 /*
@@ -177,6 +180,7 @@ const uart_command_config uart_command[] = {
 	{"BFTST", "2"},
 	{"BFGET", "3"},
 	{"BFBLE", "4"},
+	{"BFRTC", "5"},
 	{NULL, NULL}
 };	
 /*
@@ -312,14 +316,14 @@ void voice_play(void)
 #else
     	uint8_t *samples_data = malloc(5920);
     	size_t i2s_bytes_write = 0;
-	uint8_t index = 0;
+			uint8_t index = 0;
     	memset(samples_data, 0, 5920);
     	i2s_set_clk(I2S_NUM, SAMPLE_RATE, 16, 2); 
     	for(index = 0; index < 32; index++) {
-		memcpy(samples_data, pcm_sample_16k+5920 * index, 5920);
+				memcpy(samples_data, pcm_sample_16k+5920 * index, 5920);
     		i2s_write(I2S_NUM, samples_data, 5920, &i2s_bytes_write, portMAX_DELAY);
-	}
-	free(samples_data);
+			}
+			free(samples_data);
 #endif
 #endif
 }
@@ -447,9 +451,9 @@ void perform_uart_command(void)
 					break;
 				case 8: 
 					printf("BFSET -W %ld!\n", uart_priv.data);
-					xSemaphoreTake(xVoicePlay_Semaphore, portMAX_DELAY);
+					xSemaphoreTake(xVoiceIndex_Semaphore, portMAX_DELAY);
     					myprivate.voice_delay = (uint16_t)uart_priv.data;
-    					xSemaphoreGive(xVoicePlay_Semaphore);
+    					xSemaphoreGive(xVoiceIndex_Semaphore);
     					printf("Updating voice delay time in NVS Flash................\n");
     					int16_t voice_delay = (int16_t)myprivate.voice_delay;
     					err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_nvs_handle); 
@@ -550,7 +554,7 @@ void perform_uart_command(void)
 		case 4:   //BFBLE -D
 			switch(uart_priv.uart_params) {
 				case 10:
-					printf("BFBLE -S %d", (uint16_t)uart_priv.data);
+					printf("BFBLE -S %d\n", (uint16_t)uart_priv.data);
 					xSemaphoreTake(xBLEDEV_Semaphore, portMAX_DELAY);
     					myprivate.bledev_number = (uint16_t)uart_priv.data;
     					xSemaphoreGive(xBLEDEV_Semaphore);
@@ -561,7 +565,7 @@ void perform_uart_command(void)
       					printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
 					break;
 				case 3:
-					printf("BFBLE -D %d", (uint16_t)uart_priv.data);
+					printf("BFBLE -D %d\n", (uint16_t)uart_priv.data);
 					xSemaphoreTake(xBLEDEV_Semaphore, portMAX_DELAY);
     					myprivate.datecode = (uint16_t)uart_priv.data;
     					xSemaphoreGive(xBLEDEV_Semaphore);
@@ -573,6 +577,91 @@ void perform_uart_command(void)
 					break;
 				default:
 					break;
+			}
+  			nvs_close(my_nvs_handle);
+			uart_priv.uart_cmd = 255;
+			break;
+		case 5:  //BFRTC COMMAND
+			err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_nvs_handle);  
+			//int8_t temp;			
+			switch(uart_priv.uart_params) {
+				case 0:
+					printf("BFRTC -N %ld!\n", uart_priv.data);
+					xSemaphoreTake(xRTC_Semaphore, portMAX_DELAY);
+    					myprivate.rtc_mode = (uint8_t)uart_priv.data;
+    					xSemaphoreGive(xRTC_Semaphore);
+    					printf("Updating rtc mode in NVS Flash................\n");
+    					int8_t rtcmode = (int8_t)myprivate.rtc_mode;
+      					err = nvs_set_i8(my_nvs_handle, "rtcmode", rtcmode);
+      					printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+					break;
+				case 1:
+					err = nvs_get_i8(my_nvs_handle, "rtcmode", &temp);
+					switch (err) 
+					{
+  						case ESP_OK:
+    							printf("\n rtc mode = 0x%2xd \n", (uint8_t)temp);
+      							break;
+    						case ESP_ERR_NVS_NOT_FOUND:
+      							printf("BFRTC failed to read!\n");
+      							break;
+    						default :
+      							printf("Error (%s) reading!\n", esp_err_to_name(err));
+      							break;
+  					}		
+					break;
+				case 2:
+					printf("BFRTC -F %ld!\n", uart_priv.data);
+					xSemaphoreTake(xRTC_Semaphore, portMAX_DELAY);
+    					myprivate.daycnt = (uint16_t)uart_priv.data;
+    					xSemaphoreGive(xRTC_Semaphore);
+    					printf("Updating daycnt in NVS Flash................\n");
+    					int16_t daycnt = (int16_t)myprivate.daycnt;
+      					err = nvs_set_i16(my_nvs_handle, "currentday", daycnt);
+      					printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+					break;
+				case 3:
+					printf("BFRTC -D %ld!\n", uart_priv.data);
+					xSemaphoreTake(xRTC_Semaphore, portMAX_DELAY);
+    					myprivate.daycnt_backup = (uint16_t)uart_priv.data;
+    					xSemaphoreGive(xRTC_Semaphore);
+    					printf("Updating daycnt in NVS Flash................\n");
+    					int16_t daycnt1 = (int16_t)myprivate.daycnt_backup;
+      					err = nvs_set_i16(my_nvs_handle, "targetday", daycnt1);
+      					printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+				case 4: //BFRTC -L
+					err = nvs_get_i16(my_nvs_handle, "currentday", &daycnt);
+					switch (err) 
+					{
+  						case ESP_OK:
+    							printf("\n current day count = %d \n", (uint16_t)daycnt);
+      							break;
+    						case ESP_ERR_NVS_NOT_FOUND:
+      							printf("BFRTC failed to read!\n");
+      							break;
+    						default :
+      							printf("Error (%s) reading!\n", esp_err_to_name(err));
+      							break;
+  					}
+					break;
+				case 5: //BFRTC -T
+					err = nvs_get_i16(my_nvs_handle, "targetday", &daycnt1);
+					switch (err) 
+					{
+  						case ESP_OK:
+    							printf("\n target day count = %d \n", (uint16_t)daycnt1);
+      							break;
+    						case ESP_ERR_NVS_NOT_FOUND:
+      							printf("BFRTC failed to read!\n");
+      							break;
+    						default :
+      							printf("Error (%s) reading!\n", esp_err_to_name(err));
+      							break;
+  					}		
+					break;
+				default:
+					break;
+
 			}
   			nvs_close(my_nvs_handle);
 			uart_priv.uart_cmd = 255;
@@ -590,7 +679,6 @@ void echo_task(void* arg)
 { 
 	uint8_t* data = (uint8_t*) malloc(BUF_SIZE);
   	while(1) {
-		//printf("echo_task().........\n");
 		if(xSemaphoreTake(xUART0_Semaphore, portMAX_DELAY)) {
       			int len = uart_read_bytes(EX_UART_NUM, data, BUF_SIZE, 20/  portTICK_RATE_MS);
 			int command_delimiter,index;		
@@ -599,6 +687,7 @@ void echo_task(void* arg)
 			
 			int uart_command_num = 0;
 			int uart_params_num = 0;
+			int index1 = 0;
 
 			if(len > BUF_SIZE || len == 0) {
 				if(len)
@@ -621,93 +710,110 @@ void echo_task(void* arg)
 				if(uart_priv.uart_cmd == 255) 
 				{
 					command_delimiter = 0;
-					/*
-					*	To get the position of command delimiter
-					*	copy the command string
-					*/
-					for(index = 0; index < len; index++) {	
-						if(*(data + index) == ' ') {
-							break;
+					index =0;
+					while(index < len) {
+						command_delimiter = 0;
+						uart_command_num = 0;
+						uart_params_num = 0;
+						/*
+						*	To get the position of command delimiter
+						*	copy the command string
+						*/
+						for(;;) {
+							if(*(data+index) == 'B' && *(data+index+1) =='F') {
+								break;
+							}
+							else {
+								index++;
+							}
 						}
-						*(command_buf+index) = *(data + index);
-					}
-					*(command_buf + index) = '\0';	//command EOF 
+						index1 = 0;
+						for(; index < len; index++, index1++) {	
+							if(*(data + index) == ' ') {
+								break;
+							}
+							*(command_buf+index1) = *(data + index);
+						}
+						*(command_buf + index1) = '\0';	//command EOF 
 	
-					/*
-					*	copy the argument of command
-					*/
-					//value_len = 0;
-					index++;
-					command_delimiter =  index;
-					for(; index < len; index++) {
-						if(*(data + index) == ' ' || (*(data + index) == 0x0d && *(data + index + 1) == 0x0a)) {
-							break;
-						}
-						*(params_buf + index - command_delimiter) = *(data + index);
-					}
-					*(params_buf + index - command_delimiter) = '\0'; //argu EOF 
-					index++;
-					uart_priv.data = 0;
-					for(; index < len; index++) {
-						if((*(data + index) == ' ')|| (*(data + index) == 0x0d && *(data + index + 1) == 0x0a)) {
-							break;
-						}
-						printf("uart received data =  %x\n", *(data + index));
-						uart_priv.data = uart_priv.data * 10;
-						uart_priv.data += *(data + index)-0x30;
-					}					
-					 
-					printf("uart_priv.dat = %d\n", (uint16_t)uart_priv.data);
-					/*
-					*	To check the command type
-					*/
-					printf("check the uart command\n");
-					index = 0;
-					uart_priv.uart_cmd =  255;
-					while((uart_command[index].cmd) != NULL) {
-						if(strcmp_private(command_buf, uart_command[index].cmd)) {
-							index++;
-						}
-						else
-						{	
-							command_delimiter = 0;
-							while(*(uart_command[index].num + command_delimiter)) {
-								uart_command_num = uart_command_num * 10 + 
-									  *(uart_command[index].num + command_delimiter) - 0x30;
-								command_delimiter++;
+						/*
+						*	copy the argument of command
+						*/
+						//value_len = 0;
+						index++;
+						index1 = 0;
+						//command_delimiter =  index;
+						for(; index < len; index++, index1++) {
+							if(*(data + index) == ' ' || (*(data + index) == 0x0d && *(data + index + 1) == 0x0a)) {
+								break;
 							}
-							uart_priv.uart_cmd = uart_command_num;
-							printf("UART COMMAND = %d\n", uart_priv.uart_cmd);
-							break;
+							*(params_buf + index1) = *(data + index);
 						}
-					}
-					/*
-					*	To check the parameters type
-					*/
-					printf("check the uart parameters\n");
-					index = 0;
-					while((uart_params[index].cmd) != NULL) {
-						if(strcmp_private(params_buf, uart_params[index].cmd)) {
-							index++;
-						}
-						else
-						{	
-							command_delimiter = 0;
-							while(*(uart_params[index].num + command_delimiter)) {
-								uart_params_num = uart_params_num * 10 + 
-									  *(uart_params[index].num + command_delimiter) - 0x30;
-								command_delimiter++;
+						*(params_buf + index1) = '\0'; //argu EOF 
+						index++;
+						index1 = 0;
+						uart_priv.data = 0;
+						for(; index < len; index++) {
+							if((*(data + index) == ' ')|| (*(data + index) == 0x0d && *(data + index + 1) == 0x0a)) {
+								break;
 							}
-							uart_priv.uart_params = uart_params_num;
-							printf("UART PARAMS = %d\n", uart_priv.uart_params);
-							break;
+							printf("uart received data =  %x\n", *(data + index));
+							uart_priv.data = uart_priv.data * 10;
+							uart_priv.data += *(data + index)-0x30;
+						}					
+					 	index++;
+						printf("uart_priv.dat = %d\n", (uint16_t)uart_priv.data);
+						/*
+						*	To check the command type
+						*/
+						printf("check the uart command\n");
+						index1 = 0;
+						uart_priv.uart_cmd =  255;
+						while((uart_command[index1].cmd) != NULL) {
+							if(strcmp_private(command_buf, uart_command[index1].cmd)) {
+								index1++;
+							}
+							else
+							{	
+								command_delimiter = 0;
+								while(*(uart_command[index1].num + command_delimiter)) {
+									uart_command_num = uart_command_num * 10 + 
+										  *(uart_command[index1].num + command_delimiter) - 0x30;
+									command_delimiter++;
+								}
+								uart_priv.uart_cmd = uart_command_num;
+								printf("UART COMMAND = %d\n", uart_priv.uart_cmd);
+								break;
+							}
 						}
-					}					
-					/*
-					*	To perform the uart command
-					*/
-					printf("perform uart command\sn");
-					perform_uart_command();
+						/*
+						*	To check the parameters type
+						*/
+						printf("check the uart parameters\n");
+						index1 = 0;
+						while((uart_params[index1].cmd) != NULL) {
+							if(strcmp_private(params_buf, uart_params[index1].cmd)) {
+								index1++;
+							}
+							else
+							{	
+								command_delimiter = 0;
+								while(*(uart_params[index1].num + command_delimiter)) {
+									uart_params_num = uart_params_num * 10 + 
+										  *(uart_params[index1].num + command_delimiter) - 0x30;
+									command_delimiter++;
+								}
+								uart_priv.uart_params = uart_params_num;
+								printf("UART PARAMS = %d\n", uart_priv.uart_params);
+								break;
+							}
+						}					
+						/*
+						*	To perform the uart command
+						*/
+						printf("perform uart command\n");
+						perform_uart_command();
+					}
 				}
 			}
 			for(index = 0; index < len; index++) {
@@ -731,7 +837,6 @@ static void uart_event_task(void *pvParameters)
     xUART0_Semaphore = xSemaphoreCreateMutex();
     for(;;) {
         //Waiting for UART event.
-	//printf("uart_event_task().............\n");
         if(xQueueReceive(uart0_queue, (void * )&event, (portTickType)portMAX_DELAY)) {
             switch(event.type) {
                 //Event of UART receving data
@@ -828,90 +933,63 @@ static void task_elevator_1_arrival(void* arg)
     uint16_t timecnt_up_hld = 0;
     uint16_t timecnt_dn_hld = 0;
     uint8_t voice_start_u = 0;
+    uint8_t voice_u_index = 0;
+    uint8_t voice_d_index = 0;
     uint8_t voice_start_d = 0;
     uint16_t doordlytime;
     uint8_t voice_num = 0;
+    uint8_t rtc_expire = 0;
+    uint16_t rtc_daycnt = 0;
+    uint16_t rtc_daycnt1 = 0;
     for(;;) {
-	  //  	printf("task_elevator_1_arrival()............\n");
     		xSemaphoreTake(xDoorDly_Semaphore, portMAX_DELAY);
     		doordlytime = myprivate.door_delay;
     		voice_num = myprivate.voice_num;
+		rtc_expire = myprivate.rtc_mode;
+		rtc_daycnt = myprivate.daycnt;
+		rtc_daycnt1 = myprivate.daycnt_backup;
     		xSemaphoreGive(xDoorDly_Semaphore);
-#if 1
-		while(1){
-    			if((gpio_get_level(GPIO_DT1_UP) == 0) || (gpio_get_level(GPIO_DT2_UP) == 0) ) {
-    				timecnt_up++;
-    				if(timecnt_up ==10) break;
-    			}
-    			else {
-    				if(timecnt_up_hld < doordlytime) {
-    					timecnt_up_hld++;					
-    				}
-    				else {
-    					timecnt_up = 0;
-    					voice_start_u = 0;
-    				}
-    			} 
-    			if((gpio_get_level(GPIO_DT1_DN) ==0 ) || (gpio_get_level(GPIO_DT2_DN) ==0 )){
-    				timecnt_dn++;
-    				if(timecnt_dn==10) break;
-    			}
-    			else {
-    				if(timecnt_dn_hld < doordlytime) {
-    					timecnt_dn_hld++;
-    				}
-    				else {
-    					timecnt_dn = 0;
-    					voice_start_d = 0;
-    				}
-    			}
-    			vTaskDelay(10 / portTICK_RATE_MS);
-    		}
-    		if(timecnt_up == 10) {
-    			timecnt_up = 0;
-    			timecnt_up_hld = 0;
-#if 1
-			/*
-			if(esp_bt_sleep_enable() == ESP_OK) {
-				printf("BT enter into sleep\n");
-			}
-			else {
-				printf("BT can't enter into sleep\n");
-			}
-			*/
-
-#else
- 		        esp_bluedroid_disable();
-    			vTaskDelay(10 / portTICK_RATE_MS);
- 		      	esp_bluedroid_deinit();
-    			vTaskDelay(10 / portTICK_RATE_MS);
- 		      	esp_bt_controller_disable();
-    			vTaskDelay(10 / portTICK_RATE_MS);
- 		      	esp_bt_controller_deinit();
-		//	esp_bt_mem_release(ESP_BT_MODE_CLASSIC_BT);
-#endif
+    		//printf("rtc_expire=0x%2x, rtc_daycnt = %d, rtc_daycnt1 = %d\n",rtc_expire, rtc_daycnt, rtc_daycnt1);
+		if((rtc_expire == 0xaa) && (rtc_daycnt == rtc_daycnt1)) {
 			xSemaphoreGive(xElevator_UpArrival_Semaphore);
-    			vTaskDelay(10 / portTICK_RATE_MS);
-    			if(voice_start_u < voice_num) {
-    				xSemaphoreGive(xVoicePlay_Semaphore);
-    				//voice_start_u++;
-    			}
-    			xSemaphoreTake(xLED_Flash_Semaphore, portMAX_DELAY);
-    			if(voice_start_u < voice_num) {
-    				xSemaphoreTake(xVoiceComplete_Semaphore, portMAX_DELAY);
-    				voice_start_u++;
-			}
-    			vTaskDelay(10 / portTICK_RATE_MS);
-#if 1
-			//esp_bt_controller_wakeup_request();
-#else
-			bt_ssp_reinit();
-#endif
+    			vTaskDelay(5000 / portTICK_RATE_MS);
 		}
-    		else {
-    			if(timecnt_dn == 10) {
-    				timecnt_dn = 0;
-    				timecnt_dn_hld = 0;
+		else {
+#if 1
+			while(1){
+    				if((gpio_get_level(GPIO_DT1_UP) == 0) || (gpio_get_level(GPIO_DT2_UP) == 0) ) {
+    					timecnt_up++;
+    					if(timecnt_up ==10) break;
+    				}
+    				else {
+    					if(timecnt_up_hld < doordlytime) {
+    						timecnt_up_hld++;					
+    					}
+    					else {
+    						timecnt_up = 0;
+    						voice_start_u = 0;
+						voice_u_index = 0;
+    					}
+    				} 
+    				if((gpio_get_level(GPIO_DT1_DN) ==0 ) || (gpio_get_level(GPIO_DT2_DN) ==0 )){
+    					timecnt_dn++;
+    					if(timecnt_dn==10) break;
+    				}
+    				else {
+    					if(timecnt_dn_hld < doordlytime) {
+    						timecnt_dn_hld++;
+    					}
+    					else {
+    						timecnt_dn = 0;
+    						voice_start_d = 0;
+						voice_d_index = 0;
+    					}
+    				}
+    				vTaskDelay(10 / portTICK_RATE_MS);
+    			}
+    			if(timecnt_up == 10) {
+    				timecnt_up = 0;
+    				timecnt_up_hld = 0;
 #if 1
 				/*
 				if(esp_bt_sleep_enable() == ESP_OK) {
@@ -921,27 +999,37 @@ static void task_elevator_1_arrival(void* arg)
 					printf("BT can't enter into sleep\n");
 				}
 				*/
+
 #else
- 			        esp_bluedroid_disable();
+ 		        	esp_bluedroid_disable();
     				vTaskDelay(10 / portTICK_RATE_MS);
- 			      	esp_bluedroid_deinit();
+ 		      		esp_bluedroid_deinit();
     				vTaskDelay(10 / portTICK_RATE_MS);
  		      		esp_bt_controller_disable();
     				vTaskDelay(10 / portTICK_RATE_MS);
  		      		esp_bt_controller_deinit();
-			//	esp_bt_mem_release(ESP_BT_MODE_CLASSIC_BT);
+				//esp_bt_mem_release(ESP_BT_MODE_CLASSIC_BT);
 #endif
-    				xSemaphoreGive(xElevator_DnArrival_Semaphore);
+				xSemaphoreGive(xElevator_UpArrival_Semaphore);
     				vTaskDelay(10 / portTICK_RATE_MS);
-    				if(voice_start_d < voice_num) {
-    					xSemaphoreGive(xVoicePlay_Semaphore);
-    					//voice_start_d++;
+    				if(voice_start_u < voice_num) {
+					if(voice_u_index == 0) {
+    						xSemaphoreGive(xVoicePlay_Semaphore);
+						voice_u_index = 1;
+						voice_start_u = 1;
+					}
+    					//voice_start_u++;
     				}
     				xSemaphoreTake(xLED_Flash_Semaphore, portMAX_DELAY);
-    				if(voice_start_d < voice_num) {
-    					xSemaphoreTake(xVoiceComplete_Semaphore, portMAX_DELAY);
-    					voice_start_d++;
-    				}
+    				if(voice_start_u < voice_num) {
+    					if(xSemaphoreTake(xVoiceComplete_Semaphore,10 / portTICK_RATE_MS)==pdTRUE) {
+    						if( voice_start_u < voice_num) {
+							xSemaphoreGive(xVoicePlay_Semaphore);
+    							voice_start_u++;
+						}
+					}
+				}
+    				//xSemaphoreTake(xLED_Flash_Semaphore, portMAX_DELAY);
     				vTaskDelay(10 / portTICK_RATE_MS);
 #if 1
 				//esp_bt_controller_wakeup_request();
@@ -949,8 +1037,58 @@ static void task_elevator_1_arrival(void* arg)
 				bt_ssp_reinit();
 #endif
 			}
-    		}
+    			else {
+    				if(timecnt_dn == 10) {
+    					timecnt_dn = 0;
+    					timecnt_dn_hld = 0;
+#if 1
+					/*
+					if(esp_bt_sleep_enable() == ESP_OK) {
+						printf("BT enter into sleep\n");
+					}
+					else {
+						printf("BT can't enter into sleep\n");
+					}
+					*/
+#else
+ 			        	esp_bluedroid_disable();
+    					vTaskDelay(10 / portTICK_RATE_MS);
+ 			      		esp_bluedroid_deinit();
+    					vTaskDelay(10 / portTICK_RATE_MS);
+ 		      			esp_bt_controller_disable();
+    					vTaskDelay(10 / portTICK_RATE_MS);
+ 		      			esp_bt_controller_deinit();
+					//esp_bt_mem_release(ESP_BT_MODE_CLASSIC_BT);
 #endif
+    					xSemaphoreGive(xElevator_DnArrival_Semaphore);
+    					vTaskDelay(10 / portTICK_RATE_MS);
+    					if(voice_start_d < voice_num) {
+						if(voice_d_index == 0) {
+    							xSemaphoreGive(xVoicePlay_Semaphore);
+    							voice_d_index = 1;
+							voice_start_d = 1;
+						}
+    					}
+    					xSemaphoreTake(xLED_Flash_Semaphore, portMAX_DELAY);
+    					if(voice_start_d < voice_num) {
+    						if(xSemaphoreTake(xVoiceComplete_Semaphore, 10 / portTICK_RATE_MS) == pdTRUE) {
+    							xSemaphoreGive(xVoicePlay_Semaphore);
+    							voice_start_d++;
+						}
+    					}
+    					vTaskDelay(10 / portTICK_RATE_MS);
+#if 1
+					//esp_bt_controller_wakeup_request();
+#else
+					bt_ssp_reinit();
+#endif
+				}
+    			}
+#endif
+    		//	vTaskDelay(10 / portTICK_RATE_MS);
+
+		}
+
     		vTaskDelay(10 / portTICK_RATE_MS);
     }
 }
@@ -2175,7 +2313,8 @@ static void task_led_flash(void* arg)
 }
 void app_main()
 {
-	uint16_t cnt, indey;
+	uint16_t cnt, indey, sec;
+	uint16_t day;
 	gpio_config_t io_conf;
 	esp_err_t ret;
 	uint8_t tmp[8], tmp_1[8];
@@ -2253,8 +2392,11 @@ void app_main()
   	myprivate.voice_num = 2;
   	myprivate.voice_delay = 5000;
   	myprivate.work_mode = 0;
-  	myprivate.bledev_number = 0;
+	myprivate.bledev_number = 0;
   	myprivate.datecode = 20191;
+	myprivate.rtc_mode = 0x00;
+	myprivate.daycnt = 0;
+	myprivate.daycnt_backup = 0;
 	printf("Ready to init nvs flash!\n");
 	err = nvs_flash_init();
 	if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -2439,7 +2581,7 @@ void app_main()
     		default :
      			 printf("Error (%s) reading!\n", esp_err_to_name(err));
 		break;
-  	}	  	    	
+  	}	
   	printf("Ready to read the bluetooth device serial number from NVS Flash........................\n");
 	err = nvs_get_i16(my_nvs_handle, "bledevnumber", &bledev_number);
   	switch (err) {
@@ -2475,7 +2617,62 @@ void app_main()
     		default :
       			printf("Error (%s) reading!\n", esp_err_to_name(err));
 		break;
-  	}	 
+  	}	   	    	
+  	printf("Ready to read the rtc mode........................\n");
+	err = nvs_get_i8(my_nvs_handle, "rtcmode", &divider);
+  	switch (err) {
+  		case ESP_OK:
+    			printf("RTC mode Read Done! RTC mode = %d\n", (uint8_t)divider);
+      			myprivate.rtc_mode = divider;
+      		break;
+    		case ESP_ERR_NVS_NOT_FOUND:
+      			printf("The rtc mode  is not initialized yet!\n");
+      			printf("The rtc mode  is initializing now!\n");
+      			divider = (int8_t)myprivate.rtc_mode;
+      			err = nvs_set_i8(my_nvs_handle, "rtcmode", divider);
+      			printf((err != ESP_OK) ? "Failed!\n" : "Done\n"); 
+      		break;
+    		default :
+     			 printf("Error (%s) reading!\n", esp_err_to_name(err));
+		break;
+  	}	  	    	
+  	printf("Ready to read the day count........................\n");
+	err = nvs_get_i16(my_nvs_handle, "currentday", &datecode);
+  	switch (err) {
+  		case ESP_OK:
+    			printf("day count Read Done! day = %d\n", (uint16_t)datecode);
+      			myprivate.daycnt = datecode;
+      		break;
+    		case ESP_ERR_NVS_NOT_FOUND:
+      			printf("The current day is not initialized yet!\n");
+      			printf("The current day is initializing now!\n");
+      			datecode = (int16_t)myprivate.daycnt;
+      			err = nvs_set_i16(my_nvs_handle, "currentday", datecode);
+      			printf((err != ESP_OK) ? "Failed!\n" : "Done\n"); 
+      		break;
+    		default :
+     			 printf("Error (%s) reading!\n", esp_err_to_name(err));
+		break;
+  	}	  	    	
+  	printf("Ready to read the day count backup........................\n");
+	err = nvs_get_i16(my_nvs_handle, "targetday", &datecode);
+  	switch (err) {
+  		case ESP_OK:
+    			printf("target day Read Done! day = %d\n", (uint16_t)datecode);
+      			myprivate.daycnt_backup = datecode;
+      		break;
+    		case ESP_ERR_NVS_NOT_FOUND:
+      			printf("The target day is not initialized yet!\n");
+      			printf("The target day is initializing now!\n");
+      			datecode = (int16_t)myprivate.daycnt_backup;
+      			err = nvs_set_i16(my_nvs_handle, "targetday", datecode);
+      			printf((err != ESP_OK) ? "Failed!\n" : "Done\n"); 
+      		break;
+    		default :
+     			 printf("Error (%s) reading!\n", esp_err_to_name(err));
+		break;
+  	}	
+
 #if 0
 	    // Read run time blob
   size_t required_size = 0;  // value will default to 0, if not set yet in NVS
@@ -2589,7 +2786,7 @@ void app_main()
 		turnoff_led(0, myprivate.light_num);
 	}
 	bt_ssp_init();	
-  	//create Semaphore and Mutex
+	  	//create Semaphore and Mutex
 	xElevator_UpArrival_Semaphore = xSemaphoreCreateBinary();
 	xElevator_DnArrival_Semaphore = xSemaphoreCreateBinary();
 	xLED_Flash_Semaphore =  xSemaphoreCreateBinary();
@@ -2600,16 +2797,59 @@ void app_main()
 	xVoiceIndex_Semaphore = xSemaphoreCreateMutex();	
 	xDoorDly_Semaphore = xSemaphoreCreateMutex();	
 	xLEDWait_Semaphore = xSemaphoreCreateMutex();	
-	xBLEDEV_Semaphore = xSemaphoreCreateMutex();	
-		
+	xBLEDEV_Semaphore = xSemaphoreCreateMutex();
+	xRTC_Semaphore = 	 xSemaphoreCreateMutex();	
+	
 	xTaskCreate(task_elevator_1_arrival, "elevator 1 Arrival", 2048, NULL, 10, NULL);
 	xTaskCreate(task_led_flash, "led on", 2048, NULL, 11, NULL);
 	xTaskCreate(task_voice_play, "voice play", 2048, NULL, 9, NULL);
 	xTaskCreate(uart_event_task, "uart_event_task", 2048, NULL, 8, NULL);
 	xTaskCreate(echo_task, "echo_task", 2048, NULL, 7, NULL);
+	day = 0;
+	sec = 0;
 	while(1) 
 	{
-		//printf("main().....waiting........\n");
 	      	vTaskDelay(10000 / portTICK_RATE_MS);
+		printf("rtc mode = 0x%2x, tartget = %d, current = %d\n", 
+				myprivate.rtc_mode, myprivate.daycnt_backup, myprivate.daycnt);	
+		day = myprivate.daycnt;
+          	if(day < myprivate.daycnt_backup)
+		{
+          		sec++;
+          		printf("sencond = %d\n",sec);
+          		if(sec == 360 *24)
+          		{
+          			day++;
+          			//xSemaphoreTake(xDoorDly_Semaphore, portMAX_DELAY);
+      				myprivate.daycnt = day;
+      				//myprivate.daycnt_backup = day;
+      				//xSemaphoreGive(xDoorDly_Semaphore); 
+#if 1	
+				if(myprivate.rtc_mode == 0xaa) {
+          				xSemaphoreTake(xRTC_Semaphore, portMAX_DELAY);
+          				err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_nvs_handle);
+  
+      					err = nvs_set_i16(my_nvs_handle, "currentday", day);
+      					printf((err != ESP_OK) ? "Failed!\n" : "Done\n"); 
+      					//err = nvs_set_i16(my_nvs_handle, "targetday", day);
+      					//printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+      			
+					nvs_close(my_nvs_handle); 
+					xSemaphoreGive(xRTC_Semaphore);       	
+#endif
+				}
+				sec = 0;		
+          		}
+        	}
+		else {
+			if(myprivate.rtc_mode == 0xaa) {
+				sec++;
+				if(sec == 360) {
+					sec = 0;
+					xSemaphoreGive(xVoicePlay_Semaphore);
+				}
+			}
+		}
 	}	
 }
+
